@@ -1,17 +1,51 @@
-import time
-import statistics
 import copy
 
 from threading import Thread
 from collections import deque, defaultdict
 from queue import Queue
+from cmath import exp, pi
 
-import numpy
+
+def fft(x):
+    # adapted from here:
+    # https://rosettacode.org/wiki/Fast_Fourier_transform#Python
+    n = len(x)
+    if n <= 1:
+        return x
+    even = fft(x[0::2])
+    odd = fft(x[1::2])
+    t = [exp(-2j * pi * k / n) * odd[k] for k in range(n // 2)]
+    return [even[k] + t[k] for k in range(n // 2)] + \
+           [even[k] - t[k] for k in range(n // 2)]
 
 
 class TempoDetector(object):
+    """
+    Data processing class whose instances wrap a thread
+    that consumes 16-bit PCM audio data and produces
+    BPM estimates for the music therein.
 
-    def __init__(self, publisher):
+    For a detailed example of how to use this class,
+    take a look at this script:
+        https://github.com/dcully/pytempo/scripts/detect_tempo
+    """
+    def __init__(self, publisher, debug=False, fft_impl=None):
+        """
+        The publisher instance can be any object which
+        has a 'publish' method. The 'publish' should
+        take one argument, an outputted BPM, to do with as
+        it sees fit - print to stdout, publish on a ROS
+        topic, etc.
+
+        You can pass in your own fft implementation
+        (such as numpy.fft.fft) if you do not want to use
+        the included pure-Python implementation (this might
+        be beneficial to you for performance reasons).
+        """
+        self._debug = debug
+        self._fft = fft
+        if fft_impl is not None:
+            self._fft = fft
         self._in_queue = Queue(maxsize=1024)
         self._publisher = publisher
         self._energy_hist_per_freq_band = []
@@ -21,21 +55,17 @@ class TempoDetector(object):
         for _ in range(32):
             self._beat_histories.append(deque(maxlen=43*7))
         self._processing_thread = Thread(
-            target= self._run_data_processing,
+            target=self._run_data_processing,
             daemon=True,
         )
         self._processing_thread.start()
 
     def _gap_to_bpm(self, gap_length):
+        """
+        Convert a 'gap length' of sequential instantaneous energy
+        bins to a BPM value.
+        """
         return (1 / (gap_length / 43)) * 60.0
-
-    def _bpm_to_gap(self, bpm):
-        # convert beats/minute to beats/second (divide by 60)
-        bps = bpm / 60.0
-        # convert beats/second to seconds/beat (flip)
-        spb = 1.0 / bps
-        # seconds/beat * 43 gap / sec == gap / beat
-        return int(spb * 43)
 
     def _detect_tempo(self, beat_history):
         """
@@ -49,9 +79,10 @@ class TempoDetector(object):
 
         # a gap of 19 is about 136 bpm, and a gap of 35 is about 73 bpm
         # By staying inside these possible bpm values, we avoid
-        # issues with BPM doubling/halving (i.e., missing a beat and counting some
-        # votes for 60 BPM instead of 120 BPM, skewing our final result downwards)
-        # songs outside of this range are rare anyway (at least in popular music)
+        # issues with BPM doubling/halving (i.e., missing a beat and counting
+        # some votes for 60 BPM instead of 120 BPM, skewing our final result
+        # downwards)
+        # songs outside of this range are rare anyway (at least in pop music)
 
         # count all relevant gaps
         gap_length_counts = defaultdict(lambda: 0)
@@ -95,14 +126,15 @@ class TempoDetector(object):
         from each, and then use those 16 samples to select an overall BPM
         """
 
-        # dump out the beat histories across all 32 channels for visual inspection
-        # if len(self._beat_histories[0]) == 43 * 7:
-        #     for band_idx in range(16):
-        #         my_str = ''
-        #         for e in self._beat_histories[band_idx]:
-        #             my_str += '1' if e else '0'
-        #         print(my_str)
-        #     print('\n\n')
+        if self._debug and len(self._beat_histories[0]) == 43 * 7:
+            # dump out the beat histories across
+            # all 32 channels for visual inspection
+            for band_idx in range(16):
+                my_str = ''
+                for e in self._beat_histories[band_idx]:
+                    my_str += '1' if e else '0'
+                print(my_str)
+            print('\n\n')
 
         # calculate the BPM within each frequency band
         band_bpms = []
@@ -134,7 +166,7 @@ class TempoDetector(object):
         data = [sum(d) / len(d) for d in data]
 
         # compute fft of samples (giving us 1024 complex numbers)
-        data = numpy.fft.fft(data)
+        data = self._fft(data)
 
         # compute square of modulus of each sample
         # this gives us amplitudes per frequency
@@ -157,7 +189,6 @@ class TempoDetector(object):
 
         # if we have a complete sub-band energy history, compare
         # the values for this 'instant' to the trailing history
-        this_inst_is_beat = False
         if len(self._energy_hist_per_freq_band[0]) == 43:
 
             # compute the average historical energy in the last
@@ -165,12 +196,6 @@ class TempoDetector(object):
             avg_sub_band_energies = [
                 sum(x) / 43 for x in self._energy_hist_per_freq_band
             ]
-
-            # require finding beats in at least 3 bands for this to count
-            for inst_nrg, nearby_nrg in zip(
-                    inst_sub_band_energies, avg_sub_band_energies):
-                if inst_nrg > nearby_nrg * 1.3:  # here be dragons
-                    this_inst_is_beat = True
 
             # record beats found across the 16 lower bands
             for band_idx in range(16):
@@ -189,14 +214,16 @@ class TempoDetector(object):
         data = [0] * 1024
         idx = 0
 
-        # count = 0
-        # import time
-        # start_ts = time.time()
+        if self._debug:
+            import time
+            count = 0
+            start_ts = time.time()
 
         while True:
             data[idx] = self._in_queue.get()
 
-            # count += 1
+            if self._debug:
+                count += 1
 
             if idx == 1023:
                 self._detect_beat(data)
@@ -206,11 +233,11 @@ class TempoDetector(object):
             else:
                 idx += 1
 
-            # if count % 44100 == 0:
-            #     print('processed {} seconds of data in '
-            #           '{} seconds'
-            #           .format(count / 44100,
-            #                   time.time() - start_ts))
+            if self._debug and count % 44100 == 0:
+                print('processed {} seconds of data in '
+                      '{} seconds'
+                      .format(count / 44100,
+                              time.time() - start_ts))
 
     def add_sample(self, sample):
         """
