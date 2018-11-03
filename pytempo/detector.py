@@ -2,7 +2,7 @@ import time
 import statistics
 
 from threading import Thread
-from collections import deque
+from collections import deque, defaultdict
 from queue import Queue
 
 import numpy
@@ -21,47 +21,65 @@ class TempoDetector(object):
         )
         self._processing_thread.start()
 
-    def _estimate_bpm_from(self, history):
-        last = None
-        gaps = []
-        for idx in range(len(history)):
-            was_beat = history[idx]
-            if was_beat:
-                if last is None:
-                    last = idx
-                else:
-                    gap = idx - last
-                    # a gap of 10 is 4 bps or 240 bpm
-                    # a gap of 45 is <1 bps or <60 bpm
-                    if 10 < gap < 45:
-                        # this gap is a reasonable size
-                        gaps.append(gap)
-                        last = idx
-        bpms_from_gaps = [(1 / (x / 43)) * 60.0 for x in gaps]
-        print(bpms_from_gaps)
-        if len(bpms_from_gaps) < 1:
-            return None
-        bpm = statistics.harmonic_mean(bpms_from_gaps)
-        print(bpm)
-        return bpm
+    def _gap_to_bpm(self, gap_length):
+        return int((1 / (gap_length / 43)) * 60.0)
 
     def _detect_tempo(self):
         """
-        Look at the beat history and derive a tempo, publishing
-        the tempo (a BPM) as an int if one is found (do not publish
-        if you do not find a convincing tempo).
+        Look at the beat history and derive a tempo, returning
+        a BPM as an int if one is found (None otherwise).
         """
 
         # wait for a full history before inspecting it
         if not len(self._beat_history) == 43*7:
             return
 
-        # compute tempo from smoothed beats
-        # TODO - this is naive - apply a list of BPM templates
-        bpm = self._estimate_bpm_from(self._beat_history)
-        if bpm is None or 70 < bpm < 150:
+        # a gap of 19 is about 136 bpm, and a gap of 35 is about 73 bpm
+        # By staying inside these possible bpm values, we avoid
+        # issues with BPM doubling/halving (i.e., missing a beat and counting some
+        # votes for 60 BPM instead of 120 BPM, skewing our final result downwards)
+        # songs outside of this range are rare anyway (at least in popular music)
+
+        # count all relevant gaps
+        gap_length_counts = defaultdict(lambda: 0)
+        for gap_length in range(19, 35):
+            for start in range(0, len(self._beat_history) - gap_length):
+                end = start + gap_length
+                if self._beat_history[start] is True and self._beat_history[end] is True:
+                    gap_length_counts[gap_length] += 1
+
+        # convert each gap we found into a BPM value (one vote per gap)
+        bpm_candidates = []
+        for gap_length in gap_length_counts.keys():
+
+            # discard BPM candidates for which we only noticed one interval
+            if gap_length_counts[gap_length] < 2:
+                continue
+
+            for _ in range(gap_length_counts[gap_length]):
+                bpm_candidates.append(self._gap_to_bpm(gap_length))
+
+        # if there's not enough data to analyze just give up
+        if len(bpm_candidates) < 2:
             return None
-        return bpm
+
+        # filter out BPM candidates that are more than 2 standard deviations
+        # off of the original mean
+        std_dev = statistics.stdev(bpm_candidates)
+        mean = statistics.mean(bpm_candidates)
+        filtered = [bpm for bpm in bpm_candidates if abs(mean - bpm) < std_dev]
+
+        # if there's not enough data to analyze just give up (check filtered data)
+        if len(filtered) < 2:
+            return None
+
+        print(filtered)
+
+        bpm = statistics.mean(filtered)
+
+        if 71 < bpm < 139:
+            return bpm
+        return None
 
     def _detect_beat(self, data):
         """
@@ -108,9 +126,9 @@ class TempoDetector(object):
             beat_bands_count = 0
             for inst_nrg, nearby_nrg in zip(
                     inst_sub_band_energies, avg_sub_band_energies):
-                if inst_nrg > nearby_nrg * 1.2:
+                if inst_nrg > nearby_nrg * 1.4:  # TODO - here be dragons
                     beat_bands_count += 1
-            if beat_bands_count > 3:
+            if beat_bands_count > 2:
                 this_inst_is_beat = True
 
         # update our trailing beat history deque
@@ -123,14 +141,29 @@ class TempoDetector(object):
         """
         data = [0] * 1024
         idx = 0
+
+        # count = 0
+        # import time
+        # start_ts = time.time()
+
         while True:
             data[idx] = self._in_queue.get()
+
+            # count += 1
+
             if idx == 1023:
                 self._detect_beat(data)
-                self._detect_tempo()
+                bpm = self._detect_tempo()
+                self._publisher.publish(bpm)
                 idx = 0
             else:
                 idx += 1
+
+            # if count % 44100 == 0:
+            #     print('processed {} seconds of data in '
+            #           '{} seconds'
+            #           .format(count / 44100,
+            #                   time.time() - start_ts))
 
     def add_sample(self, sample):
         """
