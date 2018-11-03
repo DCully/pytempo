@@ -1,6 +1,7 @@
 import argparse
 
 import scipy.io.wavfile
+import numpy
 
 from pytempo import TempoDetector
 from pytempo import PrintPublisher
@@ -23,8 +24,9 @@ def main(args):
         raise Exception('Wav file must be 44100Hz')
     detector = TempoDetector(
         PrintPublisher(),
+        fft_impl=numpy.fft.fft,  # inject a non-pure FFT (it's faster)
     )
-    for sample in data:  # seven seconds
+    for sample in data:
         detector.add_sample(
             sample,
         )

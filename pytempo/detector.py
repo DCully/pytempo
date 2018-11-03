@@ -45,7 +45,7 @@ class TempoDetector(object):
         self._debug = debug
         self._fft = fft
         if fft_impl is not None:
-            self._fft = fft
+            self._fft = fft_impl
         self._in_queue = Queue(maxsize=1024)
         self._publisher = publisher
         self._energy_hist_per_freq_band = []

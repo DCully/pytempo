@@ -11,4 +11,10 @@ setup(
     packages=[
         'pytempo',
     ],
+    tests_require=[
+        'numpy',
+        'flake8',
+        'scipy',
+        'coverage',
+    ],
 )

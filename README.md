@@ -22,7 +22,20 @@ and for each frequency band, selects the BPM value for which the most intervals 
 Then it publishes the BPM value for which the most frequency bands have currently 'voted' into the publisher
 you injected when you initialized the TempoDetector.
 
-# Why?
+## Why?
 To help teach robots to dance, of course! :-D
 
 This BPM detection implementation is written in pure Python for ease of installation and deployment.
+
+## How do I install and run the tests?
+From the root of this repository:
+```
+# this will pull down the test data for you
+git submodule update --init --recursive
+
+# you may need sudo here, in linux
+pip install --editable .[test]
+
+# this will run flake8 (linting) and the tests and report coverage metrics
+./scripts/run_tests.sh
+```
