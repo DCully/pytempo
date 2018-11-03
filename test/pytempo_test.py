@@ -9,11 +9,6 @@ from pytempo import TempoDetector
 
 class PyTempoIntegrationTest(unittest.TestCase):
     # these tests use actual wav data, so they'll take a minute or two
-    def test_silence(self):
-        self.validate(
-            'silence.wav',
-            None,
-        )
 
     def test_85_click(self):
         self.validate(
