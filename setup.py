@@ -2,7 +2,7 @@ from distutils.core import setup
 
 setup(
     name='PyTempo',
-    version='1',
+    version='0.1.0',
     description='Causal tempo detection '
                 'for 44100hz, 16-bit audio data streams',
     author='David Cully',
