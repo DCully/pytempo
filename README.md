@@ -6,7 +6,10 @@ PyTempo is pure Python implementation of causal tempo detection for data streams
 If you open up a 16-bit, 44100Hz audio file and feed its data into an instance of a `TempoDetector`, the detector
 will (from a separate thread) publish BPM data into the publisher you injected at runtime.
 
-The `scripts/detect_tempo` executable demonstrates how to use the module in code.
+The `scripts/detect_tempo.py` example script demonstrates how to use the module in code.
+
+The test cases in `test/pytempo_test.py` demonstrate that this algorithm correctly detects the BPM of several
+pop song samples to within 3 BPM.
 
 ## How?
 The TempoDetector class aggregates and processes samples in batches of1024 samples at a time. It computes the
