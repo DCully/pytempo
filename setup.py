@@ -1,5 +1,16 @@
 from distutils.core import setup
 
+test_deps = [
+    'numpy',
+    'flake8',
+    'scipy',
+    'coverage',
+]
+
+extras={
+    'test': test_deps,
+}
+
 setup(
     name='PyTempo',
     version='0.1.0',
@@ -11,10 +22,6 @@ setup(
     packages=[
         'pytempo',
     ],
-    tests_require=[
-        'numpy',
-        'flake8',
-        'scipy',
-        'coverage',
-    ],
+    tests_require=test_deps,
+    extras_require=extras,
 )
