@@ -1,74 +1,11 @@
 import time
+import statistics
 
 from threading import Thread
 from collections import deque
 from queue import Queue
 
 import numpy
-
-
-def smooth_beats(beat_history):
-    """
-    apply some very simple clustering to group nearby beats
-    TODO - improve this
-    """
-    history = [False] * len(self._beat_history)
-    in_beat = False
-    beat_start = -1
-    beat_end = -1
-    for i in range(len(self._beat_history)):
-
-        # the current value
-        now_is_beat = self._beat_history[i]
-
-        # update in_beat value
-        if now_is_beat and not in_beat:
-            # case - start of a new beat
-            beat_start = i
-            in_beat = True
-        elif now_is_beat and in_beat:
-            # case - a straight continuation of a beat
-            beat_end = i
-            in_beat = True
-        elif not now_is_beat and in_beat:
-            # case - maybe in a dodgy beat, or maybe the beat is over
-            if i + 1 < len(history):
-                # if the next one right after this is a beat event
-                in_beat = True
-            else:
-                in_beat = False
-                beat_end = i
-        else:
-            # case - not in a beat, and not seeing a new one starting
-            in_beat = False
-
-        # react to in_beat value
-        if in_beat:
-            # build up more data, waiting for this beat to end
-            continue
-        else:
-            # consolidate the trailing events into a single, centralized beat
-            beat_location = int(beat_start + beat_end / 2.0)
-            history[beat_location] = True
-
-    return history
-
-
-def compute_max_gap_from(history):
-    max_gap = 0
-    last = None
-    for idx in range(len(history)):
-        was_beat = history[idx]
-        if was_beat:
-            if last is None:
-                last = idx
-            else:
-                gap = idx - last
-                if gap > max_gap:
-                    max_gap = gap
-    if max_gap > 0:
-        return max_gap
-    return None
 
 
 class TempoDetector(object):
@@ -84,6 +21,28 @@ class TempoDetector(object):
         )
         self._processing_thread.start()
 
+    def _estimate_bpm_from(self, history):
+        last = None
+        gaps = []
+        for idx in range(len(history)):
+            was_beat = history[idx]
+            if was_beat:
+                if last is None:
+                    last = idx
+                else:
+                    gap = idx - last
+                    # a gap of 10 is 4 bps or 240 bpm
+                    # a gap of 45 is <1 bps or <60 bpm
+                    if 10 < gap < 45:
+                        # this gap is a reasonable size
+                        gaps.append(gap)
+                        last = idx
+        bpms_from_gaps = [(1 / (x / 43)) * 60.0 for x in gaps]
+        print(bpms_from_gaps)
+        bpm = statistics.harmonic_mean(bpms_from_gaps)
+        print(bpm)
+        return bpm
+
     def _detect_tempo(self):
         """
         Look at the beat history and derive a tempo, publishing
@@ -95,28 +54,12 @@ class TempoDetector(object):
         if not len(self._beat_history) == 43*7:
             return
 
-        # apply some very simple clustering to group nearby beats
-        history = smooth_beats(self._beat_history)
-
         # compute tempo from smoothed beats
         # TODO - this is naive - apply a list of BPM templates
-        max_gap = compute_max_gap_from(history)
-        if max_gap is None:
+        bpm = self._estimate_bpm_from(self._beat_history)
+        if bpm is None or 70 < bpm < 150:
             return None
-
-        # each slot is 1/43 of a second
-        # so this is effectively how long each beat takes up
-        # 60bpm would mean that max_gap_length_seconds == 1
-        max_gap_length_seconds = max_gap * (1.0 / 43.0)
-
-        # convert seconds per beat to beats-per-second and then beats-per-minute
-        bps = 1.0 / max_gap_length_seconds
-        bpm = bps * 60.0
-
-        # only return reasonable BPM values
-        if 70 < bpm < 150:
-            return bpm
-        return None
+        return bpm
 
     def _detect_beat(self, data):
         """
@@ -163,9 +106,9 @@ class TempoDetector(object):
             beat_bands_count = 0
             for inst_nrg, nearby_nrg in zip(
                     inst_sub_band_energies, avg_sub_band_energies):
-                if inst_nrg > nearby_nrg * 1.3:
+                if inst_nrg > nearby_nrg * 1.2:
                     beat_bands_count += 1
-            if beat_bands_count > 2:
+            if beat_bands_count > 3:
                 this_inst_is_beat = True
 
         # update our trailing beat history deque
