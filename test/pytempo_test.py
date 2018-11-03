@@ -67,7 +67,7 @@ class PyTempoIntegrationTest(unittest.TestCase):
 
         wav_file_path = os.path.abspath(os.path.join(
             os.path.dirname(os.path.realpath(__file__)),
-            'test_data',
+            'pytempo_test_data',
             wav_file_name,
         ))
         detector = TempoDetector(
