@@ -1,5 +1,6 @@
 import time
 import statistics
+import copy
 
 from threading import Thread
 from collections import deque, defaultdict
@@ -16,10 +17,9 @@ class TempoDetector(object):
         self._energy_hist_per_freq_band = []
         for _ in range(32):
             self._energy_hist_per_freq_band.append(deque(maxlen=43))
-        self._beat_history = deque(maxlen=43*7)  # ~7 seconds
-        # self._beat_histories = []
-        # for _ in range(32):
-        #     self._beat_histories.append(deque(maxlen=43*7))
+        self._beat_histories = []
+        for _ in range(32):
+            self._beat_histories.append(deque(maxlen=43*7))
         self._processing_thread = Thread(
             target= self._run_data_processing,
             daemon=True,
@@ -37,14 +37,14 @@ class TempoDetector(object):
         # seconds/beat * 43 gap / sec == gap / beat
         return int(spb * 43)
 
-    def _detect_tempo(self):
+    def _detect_tempo(self, beat_history):
         """
         Look at the beat history and derive a tempo, returning
         a BPM as an int if one is found (None otherwise).
         """
 
         # wait for a full history before inspecting it
-        if not len(self._beat_history) == 43*7:
+        if not len(beat_history) == 43*7:
             return
 
         # a gap of 19 is about 136 bpm, and a gap of 35 is about 73 bpm
@@ -56,9 +56,9 @@ class TempoDetector(object):
         # count all relevant gaps
         gap_length_counts = defaultdict(lambda: 0)
         for gap_length in range(19, 35):
-            for start in range(0, len(self._beat_history) - gap_length):
+            for start in range(0, len(beat_history) - gap_length):
                 end = start + gap_length
-                if self._beat_history[start] is True and self._beat_history[end] is True:
+                if beat_history[start] is True and beat_history[end] is True:
                     gap_length_counts[gap_length] += 1
 
         # convert each gap we found into a BPM value (one vote per gap)
@@ -76,35 +76,59 @@ class TempoDetector(object):
         if len(bpm_candidates) < 2:
             return None
 
-        # filter out BPM candidates that are more than 2 standard deviations
-        # off of the original mean
-        std_dev = statistics.stdev(bpm_candidates)
-        mean = statistics.mean(bpm_candidates)
-        filtered = [bpm for bpm in bpm_candidates if abs(mean - bpm) < std_dev]
+        # return the most common BPM
+        counts = defaultdict(lambda: 0)
+        for bpm in bpm_candidates:
+            counts[bpm] += 1
+        counts = [(key, counts[key]) for key in counts.keys()]
+        counts.sort(key=lambda x: x[1], reverse=True)
+        bpm = counts[0][0]
 
-        # if there's not enough data to analyze just give up (check filtered data)
-        if len(filtered) < 2:
-            return None
+        # ... if it's reasonable :-)
+        if 71 < bpm < 139:
+            return bpm
+        return None
 
-        # # dump out the beat histories across all 32 channels for visual inspection
+    def _detect_tempos(self):
+        """
+        Inspect the bottom 16 frequency band deques, deriving a bpm estimate
+        from each, and then use those 16 samples to select an overall BPM
+        """
+
+        # dump out the beat histories across all 32 channels for visual inspection
         # if len(self._beat_histories[0]) == 43 * 7:
-        #     for band_idx in range(32):
+        #     for band_idx in range(16):
         #         my_str = ''
         #         for e in self._beat_histories[band_idx]:
         #             my_str += '1' if e else '0'
         #         print(my_str)
         #     print('\n\n')
 
-        bpm = statistics.mean(filtered)
+        # calculate the BPM within each frequency band
+        band_bpms = []
+        for freq_band_idx in range(16):
+            history = list(copy.deepcopy(self._beat_histories[freq_band_idx]))
+            band_bpms.append(self._detect_tempo(history))
 
-        if 71 < bpm < 139:
-            return bpm
-        return None
+        # filter out no-signal bands
+        band_bpms = [bpm for bpm in band_bpms if bpm is not None]
+        if len(band_bpms) == 0:
+            return None
+
+        # count frequency of selected BPMs across bands
+        counts = defaultdict(lambda: 0)
+        for bpm in band_bpms:
+            counts[bpm] += 1
+        counts = [(key, counts[key]) for key in counts.keys()]
+        counts.sort(key=lambda x: x[1], reverse=True)
+
+        # return the most commonly detected BPM across the frequency bands
+        return counts[0][0]
 
     def _detect_beat(self, data):
         """
         Process the raw data to detect beats in this instant, and update
-        self._beat_history accordingly with a True or False value.
+        history accordingly with a True or False value.
         """
         # collapse data into one channel
         data = [sum(d) / len(d) for d in data]
@@ -148,17 +172,14 @@ class TempoDetector(object):
                 if inst_nrg > nearby_nrg * 1.3:  # here be dragons
                     this_inst_is_beat = True
 
-            # # record beats found across all 32 frequency bands
-            # for band_idx in range(32):
-            #     inst_nrg = inst_sub_band_energies[band_idx]
-            #     avg_nrg = avg_sub_band_energies[band_idx]
-            #     beat_found = False
-            #     if inst_nrg > avg_nrg * 1.3:
-            #         beat_found = True
-            #     self._beat_histories[band_idx].append(beat_found)
-
-        # update our trailing beat history deque
-        self._beat_history.append(this_inst_is_beat)
+            # record beats found across the 16 lower bands
+            for band_idx in range(16):
+                inst_nrg = inst_sub_band_energies[band_idx]
+                avg_nrg = avg_sub_band_energies[band_idx]
+                beat_found = False
+                if inst_nrg > avg_nrg * 1.3:
+                    beat_found = True
+                self._beat_histories[band_idx].append(beat_found)
 
     def _run_data_processing(self):
         """
@@ -179,7 +200,7 @@ class TempoDetector(object):
 
             if idx == 1023:
                 self._detect_beat(data)
-                bpm = self._detect_tempo()
+                bpm = self._detect_tempos()
                 self._publisher.publish(bpm)
                 idx = 0
             else:
