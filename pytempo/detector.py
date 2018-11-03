@@ -39,6 +39,8 @@ class TempoDetector(object):
                         last = idx
         bpms_from_gaps = [(1 / (x / 43)) * 60.0 for x in gaps]
         print(bpms_from_gaps)
+        if len(bpms_from_gaps) < 1:
+            return None
         bpm = statistics.harmonic_mean(bpms_from_gaps)
         print(bpm)
         return bpm
