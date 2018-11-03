@@ -1,8 +1,8 @@
 import copy
 
-from threading import Thread
+from threading import Thread, Event
 from collections import deque, defaultdict
-from queue import Queue
+from queue import Queue, Empty
 from cmath import exp, pi
 
 
@@ -58,6 +58,7 @@ class TempoDetector(object):
             target=self._run_data_processing,
             daemon=True,
         )
+        self._exit_flag = Event()
         self._processing_thread.start()
 
     def _gap_to_bpm(self, gap_length):
@@ -219,8 +220,12 @@ class TempoDetector(object):
             count = 0
             start_ts = time.time()
 
-        while True:
-            data[idx] = self._in_queue.get()
+        while not self._exit_flag.is_set():
+
+            try:
+                data[idx] = self._in_queue.get(timeout=1)
+            except Empty:
+                continue
 
             if self._debug:
                 count += 1
@@ -249,3 +254,9 @@ class TempoDetector(object):
         audio channel.
         """
         self._in_queue.put(sample)
+
+    def shutdown(self):
+        """
+        Shut down the internal processing thread.
+        """
+        self._exit_flag.set()
