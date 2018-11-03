@@ -21,3 +21,5 @@ you injected when you initialized the TempoDetector.
 
 # Why?
 To help teach robots to dance, of course! :-D
+
+This BPM detection implementation is written in pure Python for ease of installation and deployment.
