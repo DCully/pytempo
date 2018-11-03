@@ -13,8 +13,13 @@ class TempoDetector(object):
     def __init__(self, publisher):
         self._in_queue = Queue(maxsize=1024)
         self._publisher = publisher
-        self._energy_hist_per_freq_band = [deque(maxlen=43)] * 32
+        self._energy_hist_per_freq_band = []
+        for _ in range(32):
+            self._energy_hist_per_freq_band.append(deque(maxlen=43))
         self._beat_history = deque(maxlen=43*7)  # ~7 seconds
+        # self._beat_histories = []
+        # for _ in range(32):
+        #     self._beat_histories.append(deque(maxlen=43*7))
         self._processing_thread = Thread(
             target= self._run_data_processing,
             daemon=True,
@@ -22,7 +27,15 @@ class TempoDetector(object):
         self._processing_thread.start()
 
     def _gap_to_bpm(self, gap_length):
-        return int((1 / (gap_length / 43)) * 60.0)
+        return (1 / (gap_length / 43)) * 60.0
+
+    def _bpm_to_gap(self, bpm):
+        # convert beats/minute to beats/second (divide by 60)
+        bps = bpm / 60.0
+        # convert beats/second to seconds/beat (flip)
+        spb = 1.0 / bps
+        # seconds/beat * 43 gap / sec == gap / beat
+        return int(spb * 43)
 
     def _detect_tempo(self):
         """
@@ -73,7 +86,14 @@ class TempoDetector(object):
         if len(filtered) < 2:
             return None
 
-        print(filtered)
+        # # dump out the beat histories across all 32 channels for visual inspection
+        # if len(self._beat_histories[0]) == 43 * 7:
+        #     for band_idx in range(32):
+        #         my_str = ''
+        #         for e in self._beat_histories[band_idx]:
+        #             my_str += '1' if e else '0'
+        #         print(my_str)
+        #     print('\n\n')
 
         bpm = statistics.mean(filtered)
 
@@ -122,14 +142,20 @@ class TempoDetector(object):
                 sum(x) / 43 for x in self._energy_hist_per_freq_band
             ]
 
-            # require finding beats in at least 2 bands for this to count
-            beat_bands_count = 0
+            # require finding beats in at least 3 bands for this to count
             for inst_nrg, nearby_nrg in zip(
                     inst_sub_band_energies, avg_sub_band_energies):
-                if inst_nrg > nearby_nrg * 1.4:  # TODO - here be dragons
-                    beat_bands_count += 1
-            if beat_bands_count > 2:
-                this_inst_is_beat = True
+                if inst_nrg > nearby_nrg * 1.3:  # here be dragons
+                    this_inst_is_beat = True
+
+            # # record beats found across all 32 frequency bands
+            # for band_idx in range(32):
+            #     inst_nrg = inst_sub_band_energies[band_idx]
+            #     avg_nrg = avg_sub_band_energies[band_idx]
+            #     beat_found = False
+            #     if inst_nrg > avg_nrg * 1.3:
+            #         beat_found = True
+            #     self._beat_histories[band_idx].append(beat_found)
 
         # update our trailing beat history deque
         self._beat_history.append(this_inst_is_beat)
