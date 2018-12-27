@@ -12,7 +12,7 @@ The test cases in `test/pytempo_test.py` demonstrate that this algorithm correct
 pop song samples to within 3 BPM.
 
 ## How?
-The TempoDetector class aggregates and processes samples in batches of1024 samples at a time. It computes the
+The TempoDetector class aggregates and processes samples in batches of 1024 samples at a time. It computes the
 energy per frequency band per 1024 samples, and stores trailing histories of these energy values. When it processes
 a batch whose energy in a given frequency band is significantly different than the trailing average, it records a
 'beat' event at that moment in its time line.
@@ -37,5 +37,6 @@ git submodule update --init --recursive
 pip install --editable .[test]
 
 # this will run flake8 (linting) and the tests and report coverage metrics
+# NOTE: these are integration tests - they process actual sound files - they run slowly
 ./scripts/run_tests.sh
 ```
